@@ -1,0 +1,6 @@
+{
+  "name": "Gym SaaS Platform",
+  "description": "Multi-tenant Gym Management Android & Web App with role-based dashboards, Supabase backend, QR check-ins, Razorpay payments, and AI workout generator.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
