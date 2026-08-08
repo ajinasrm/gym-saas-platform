@@ -96,39 +96,18 @@ export interface WorkoutPlan {
   created_at: string;
 }
 
-export type PaymentMethod =
-  | 'Cash'
-  | 'UPI'
-  | 'Card'
-  | 'Bank Transfer'
-  | 'Cheque'
-  | 'Other';
-
-export type PaymentStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
-
-/**
- * A payment awaiting admin approval. There is no online gateway: money is
- * collected offline and an Admin approves the request, which is what extends
- * the membership.
- */
-export interface PaymentRequest {
+export interface PaymentTransaction {
   id: string;
-  user_id: string;
-  gym_id: string;
-  plan_name: string;
-  plan_months: number;
+  orderId: string;
+  userId: string;
+  userName: string;
+  gymId: string;
+  planName: string;
   amount: number;
   currency: string;
-  status: PaymentStatus;
-  method: PaymentMethod;
-  reference?: string | null;
-  member_note?: string | null;
-  admin_note?: string | null;
-  reviewed_by?: string | null;
-  reviewed_at?: string | null;
-  created_at: string;
-  /** Joined client-side for display. */
-  user_name?: string;
+  status: 'SUCCESS' | 'PENDING' | 'FAILED';
+  paymentMethod: 'UPI' | 'Card' | 'Netbanking';
+  timestamp: string;
 }
 
 export interface BodyProgressMetric {

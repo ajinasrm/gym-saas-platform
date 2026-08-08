@@ -10,36 +10,35 @@ import {
   BatteryMedium, 
   ShieldCheck, 
   ChevronDown,
-  AlertTriangle,
-  X,
   Sparkles,
   CreditCard,
   Dumbbell
 } from 'lucide-react';
-import { Tenant, User } from '../lib/types';
+import { Tenant, Role, User } from '../lib/types';
 
 interface AndroidFrameProps {
+  tenants: Tenant[];
   currentTenant: Tenant;
+  onSelectTenant: (tenant: Tenant) => void;
   currentUser: User | null;
   onOpenQRScanner: () => void;
+
   onOpenAIWorkoutModal: () => void;
   isLiveSupabaseConnected: boolean;
   onLogout?: () => void;
-  /** Surfaced as a dismissible banner so failures are visible, not silent. */
-  dataError?: string;
-  onDismissError?: () => void;
   children: React.ReactNode;
 }
 
 export const AndroidFrame: React.FC<AndroidFrameProps> = ({
+  tenants,
   currentTenant,
+  onSelectTenant,
   currentUser,
   onOpenQRScanner,
+
   onOpenAIWorkoutModal,
   isLiveSupabaseConnected,
   onLogout,
-  dataError,
-  onDismissError,
   children
 }) => {
   const [isMobileFrame, setIsMobileFrame] = useState(false);
@@ -79,15 +78,6 @@ export const AndroidFrame: React.FC<AndroidFrameProps> = ({
                 <Building2 className="w-3.5 h-3.5 text-slate-400" />
                 <span className="text-[11px] font-bold text-slate-200 truncate max-w-[120px]">
                   {currentTenant.name}
-                </span>
-                <span
-                  title={isLiveSupabaseConnected ? 'Connected to Supabase' : 'Demo data — no database connected'}
-                  className={`ml-1 flex items-center gap-1 text-[10px] font-semibold ${
-                    isLiveSupabaseConnected ? 'text-emerald-400' : 'text-amber-400'
-                  }`}
-                >
-                  <Database className="w-3 h-3" />
-                  {isLiveSupabaseConnected ? 'Live' : 'Demo'}
                 </span>
               </div>
             </div>
@@ -144,18 +134,6 @@ export const AndroidFrame: React.FC<AndroidFrameProps> = ({
           </div>
         </div>
       </header>
-
-      {dataError && (
-        <div className="bg-red-500/10 border-b border-red-500/30 px-4 py-2.5 text-red-300 text-xs flex items-start gap-2">
-          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-          <span className="flex-1">{dataError}</span>
-          {onDismissError && (
-            <button onClick={onDismissError} className="p-0.5 hover:text-white" aria-label="Dismiss">
-              <X className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
-      )}
 
       {/* MAIN VIEW AREA */}
       <main className="flex-1 flex items-center justify-center p-2 sm:p-6 overflow-y-auto bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-900 via-slate-950 to-slate-950">

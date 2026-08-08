@@ -2,7 +2,7 @@ import path from "path";
 import express from "express";
 import app from "./app";
 
-const PORT = Number(process.env.PORT) || 3000;
+const PORT = 3000;
 
 // START SERVER / VITE MIDDLEWARE
 async function startServer() {

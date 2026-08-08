@@ -1,4 +1,4 @@
-import { Tenant, User, Membership, AttendanceRecord, WorkoutPlan, BodyProgressMetric, GymClass, SupplementProduct, DailyNutritionSummary } from './types';
+import { Tenant, User, Membership, AttendanceRecord, WorkoutPlan, PaymentTransaction, BodyProgressMetric, GymClass, SupplementProduct, DailyNutritionSummary } from './types';
 
 export const INITIAL_TENANTS: Tenant[] = [
   {

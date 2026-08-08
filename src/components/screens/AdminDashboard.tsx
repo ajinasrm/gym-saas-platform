@@ -24,17 +24,13 @@ import {
   XCircle,
   ChevronRight,
   Cake,
-  Dumbbell,
-  Edit2,
-  Trash2
+  Dumbbell
 } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip } from 'recharts';
-import { Tenant, User, Membership, AttendanceRecord, GymClass, PaymentRequest } from '../../lib/types';
-import { PaymentApprovalsPanel } from '../PaymentApprovalsPanel';
+import { Tenant, User, Membership, AttendanceRecord, GymClass } from '../../lib/types';
 import { REVENUE_STATS_DATA, INITIAL_CLASSES, INITIAL_TENANTS, INITIAL_PRODUCTS } from '../../lib/mockData';
 import { getSupabase, getStoredSupabaseCredentials } from '../../lib/supabase';
 import { createClient } from '@supabase/supabase-js';
-import { deleteUser as dbDeleteUser, upsertMembership, describeDbError } from '../../lib/db';
 
 interface AdminDashboardProps {
   tenant: Tenant;
@@ -42,13 +38,8 @@ interface AdminDashboardProps {
   memberships: Membership[];
   attendance: AttendanceRecord[];
   onOpenQRScanner: () => void;
-  payments: PaymentRequest[];
-  onApprovePayment: (paymentId: string, note: string) => Promise<void>;
-  onRejectPayment: (paymentId: string, note: string) => Promise<void>;
-  /** Re-reads everything from Supabase. */
-  onRefresh: () => Promise<void> | void;
-  isRefreshing: boolean;
-  isLive: boolean;
+  onOpenPaymentModal: (planName: string, amount: number) => void;
+  onAddMember: (newUser: Partial<User>) => void;
 }
 
 const RENEWAL_PLANS = {
@@ -65,15 +56,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   memberships,
   attendance,
   onOpenQRScanner,
-  payments,
-  onApprovePayment,
-  onRejectPayment,
-  onRefresh,
-  isRefreshing,
-  isLive
+  onOpenPaymentModal,
+  onAddMember
 }) => {
-  const [activeTab, setActiveTab] = useState<'analytics' | 'members' | 'approvals' | 'classes' | 'pos'>('analytics');
-  const currentTenant = tenant;   // always follow the prop; never fork it
+  const [activeTab, setActiveTab] = useState<'analytics' | 'members' | 'classes' | 'pos'>('analytics');
+  const [currentTenant, setCurrentTenant] = useState<Tenant>(tenant);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<'All' | 'Active' | 'Expired' | 'DueRenewal'>('All');
   
@@ -87,6 +74,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   
   // Add Member State
   const [isAddingMember, setIsAddingMember] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [newMemberName, setNewMemberName] = useState('');
   const [newMemberEmail, setNewMemberEmail] = useState('');
   const [newMemberRole, setNewMemberRole] = useState<'Member' | 'Trainer' | 'Admin'>('Member');
@@ -103,9 +91,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [aiInsights, setAiInsights] = useState<any>(null);
   const [loadingAi, setLoadingAi] = useState(false);
   
-  const [actionError, setActionError] = useState('');
-
-  const pendingPayments = payments.filter(p => p.status === 'PENDING').length;
+  // Refresh State
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   // Studio Class Management State
   const [gymClasses, setGymClasses] = useState<GymClass[]>(INITIAL_CLASSES);
@@ -157,16 +144,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   const handleAddMemberSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newMemberName || !newMemberEmail) return;
     
-    const client = getSupabase();
-    if (!client) {
-      alert('Cannot create a member: Supabase is not connected. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in Vercel.');
+    // 1. Validation Check
+    if (!newMemberName.trim() || !newMemberEmail.trim()) {
+      alert("Validation Error: Please provide both Name and Email.");
       return;
     }
-
+    
+    setIsSubmitting(true);
+    
     try {
-      // 1. Create a temporary client so signUp doesn't log the Admin out!
+      const client = getSupabase();
+      if (!client) {
+        throw new Error("Supabase is not connected.");
+      }
+
+      // 2. Create a temporary client so signUp doesn't log the Admin out!
       const { url, anonKey } = getStoredSupabaseCredentials();
       const tempClient = createClient(url, anonKey, {
         auth: { persistSession: false, autoRefreshToken: false }
@@ -175,7 +168,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       // Auto-generate a secure temporary password
       const tempPassword = `GYM_${Math.random().toString(36).substring(2, 8).toUpperCase()}!`;
       
-      // 2. Sign Up the user in Supabase Auth (This will trigger a confirmation email if enabled in Supabase)
+      // 3. Sign Up the user in Supabase Auth (This will trigger a confirmation email if enabled in Supabase)
       const { data: authData, error: authErr } = await tempClient.auth.signUp({
         email: newMemberEmail,
         password: tempPassword,
@@ -189,7 +182,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       
       const newUserId = authData.user.id;
       
-      // 3. Insert into public.users using the ADMIN's authenticated client
+      // 4. Insert into public.users using the ADMIN's authenticated client
       const newUser: User = {
         user_id: newUserId,
         gym_id: currentTenant.gym_id,
@@ -205,7 +198,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       const { error: dbErr } = await client.from('users').insert(newUser);
       if (dbErr) throw dbErr;
       
-      // 4. Create a default membership based on selected plan
+      // 5. Create a default membership based on selected plan
       if (newMemberRole === 'Member') {
          const planDetails = RENEWAL_PLANS[newMemberPlan];
          const mStart = new Date();
@@ -225,57 +218,41 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
          if (mErr) console.error("Failed to assign default membership", mErr);
       }
       
-      // 5. Refresh from the database rather than guessing at local state.
+      // 6. Update local UI state
       setLocalUsers([newUser, ...localUsers]);
-      await onRefresh();
+      onAddMember(newUser);
 
-      alert(
-        `Member created.\n\n` +
-        `Email: ${newMemberEmail}\n` +
-        `Temporary password: ${tempPassword}\n\n` +
-        `Share these credentials with the member. If email confirmation is on ` +
-        `in Supabase, they must confirm before their first sign-in.`
-      );
+      alert(`Success! Account created securely in Supabase.\n\nA confirmation email has been sent to ${newMemberEmail}.\n\nTemporary Password: ${tempPassword}\n(Please share this with the user if they didn't receive the email)`);
 
+      // Reset form state
       setNewMemberName('');
       setNewMemberEmail('');
       setNewMemberPhone('');
       setNewMemberDob('');
       setIsAddingMember(false);
-
+      
     } catch (error: any) {
       console.error(error);
-      setActionError(describeDbError(error));
-      alert(`Could not create the member.\n\n${describeDbError(error)}`);
+      alert(`Error creating user: ${error.message}\n\nDid you run the RLS INSERT policy in Supabase SQL?`);
+    } finally {
+      // Robust Error Handling: Reset loading state regardless of success or failure
+      setIsSubmitting(false);
     }
   };
 
-  const handleDeleteUser = async (id: string) => {
-    if (!confirm('Remove this member from the gym? This cannot be undone.')) return;
-
-    // v1 only spliced the row out of React state, so the member reappeared on
-    // the next refresh. This deletes the profile row for real.
-    if (!isLive) {
+  const handleDeleteUser = (id: string) => {
+    if (confirm('Are you sure you want to remove this user?')) {
       setLocalUsers(localUsers.filter(u => u.user_id !== id));
-      return;
-    }
-
-    try {
-      await dbDeleteUser(id);
-      setLocalUsers(localUsers.filter(u => u.user_id !== id));
-      await onRefresh();
-    } catch (err) {
-      setActionError(describeDbError(err));
     }
   };
 
   const handleRenewUser = async (userId: string) => {
     const client = getSupabase();
     if (!client) {
-      alert('Cannot renew: Supabase is not connected.');
+      alert("Supabase is not connected.");
       return;
     }
-
+    
     const planDetails = RENEWAL_PLANS[renewingPlan];
     const currentMembership = memberships.find(m => m.user_id === userId);
     
@@ -309,13 +286,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
          const { error } = await client.from('memberships').insert(newMembership);
          if (error) throw error;
       }
+      alert(`Success! Member renewed for ${renewingPlan}.\\n(Click the Refresh button to see updated dates)`);
       setRenewingUserId(null);
-      await onRefresh();
-      alert(`Membership renewed for ${renewingPlan}.`);
     } catch (error: any) {
       console.error(error);
-      setActionError(describeDbError(error));
-      alert(`Could not renew this membership.\n\n${describeDbError(error)}`);
+      alert(`Failed to renew: ${error.message}\\n\\nDid you run the RLS UPDATE policy in Supabase SQL?`);
     }
   };
 
@@ -324,27 +299,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     const rows = localUsers.map(u => 
       [u.member_internal_id || 'N/A', u.full_name, u.email, u.role, u.phone || '', u.date_of_birth || '', u.created_at]
     );
-    // v1 joined rows with the two-character sequence backslash-n and ran the
-    // result through encodeURI, producing a single-line file. Build a real Blob
-    // instead, and quote fields so commas in names cannot break columns.
-    const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const csv = [headers, ...rows].map(r => r.map(esc).join(',')).join('\r\n');
-
-    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(','), ...rows.map(e => e.join(','))].join('\\n');
+    const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
-    link.href = url;
-    link.download = `members_${currentTenant.name.replace(/\s+/g, '_')}.csv`;
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', `members_${currentTenant.name.replace(/\s+/g, '_')}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    URL.revokeObjectURL(url);
   };
 
-  // v1 just spun the icon for 800ms without fetching anything.
-  const handleRefresh = async () => {
-    setActionError('');
-    await onRefresh();
+  const handleRefresh = () => {
+    setIsRefreshing(true);
+    setTimeout(() => setIsRefreshing(false), 800);
   };
   
   // Birthday Check
@@ -412,13 +379,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
         {/* Tenant Selector & AI Advisor Button */}
         <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end">
-          {/* v1 rendered a dropdown of MOCK tenants. Selecting one swapped in a
-              gym_id that does not exist in the database and emptied every
-              screen. This shows the real, signed-in gym instead. */}
-          <div className="bg-slate-950 border border-slate-800 text-xs font-bold text-emerald-400 px-3 py-2 rounded-xl flex items-center gap-2">
-            <Building2 className="w-3.5 h-3.5" />
-            <span className="truncate max-w-[160px]">{currentTenant.name}</span>
-          </div>
+          <select
+            value={currentTenant.gym_id}
+            onChange={(e) => {
+              const t = INITIAL_TENANTS.find(it => it.gym_id === e.target.value);
+              if (t) setCurrentTenant(t);
+            }}
+            className="bg-slate-950 border border-slate-800 text-xs font-bold text-emerald-400 px-3 py-2 rounded-xl focus:outline-none"
+          >
+            {INITIAL_TENANTS.map(t => (
+              <option key={t.gym_id} value={t.gym_id}>{t.name}</option>
+            ))}
+          </select>
 
           <button
             onClick={handleRefresh}
@@ -458,7 +430,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         {[
           { id: 'analytics', label: 'Franchise Overview', icon: TrendingUp },
           { id: 'members', label: 'Members Directory', icon: Users },
-          { id: 'approvals', label: 'Payment Approvals', icon: CreditCard, badge: pendingPayments },
           { id: 'classes', label: 'Classes & Studio', icon: Calendar },
           { id: 'pos', label: 'Front-Desk POS', icon: ShoppingBag },
         ].map((tab) => {
@@ -476,13 +447,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             >
               <Icon className="w-4 h-4" />
               <span>{tab.label}</span>
-              {'badge' in tab && (tab as any).badge > 0 && (
-                <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-bold ${
-                  isActive ? 'bg-slate-950 text-amber-400' : 'bg-amber-500 text-slate-950'
-                }`}>
-                  {(tab as any).badge}
-                </span>
-              )}
             </button>
           );
         })}
@@ -516,7 +480,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 <span className="text-[11px] font-medium">Check-ins Today</span>
                 <QrCode className="w-4 h-4 text-amber-400" />
               </div>
-              <p className="text-xl font-extrabold text-white">{attendance.filter(a => a.check_in?.slice(0, 10) === new Date().toISOString().split('T')[0]).length} Passes</p>
+              <p className="text-xl font-extrabold text-white">{attendance.filter(a => a.date === new Date().toISOString().split('T')[0]).length} Passes</p>
               <p className="text-[10px] text-indigo-400 font-medium mt-1">Today's Traffic</p>
             </div>
 
@@ -531,25 +495,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </div>
               <p className="text-xl font-extrabold text-white">{dueRenewalCount} Members</p>
               <p className="text-[10px] text-rose-400 font-medium mt-1">Action Required</p>
-            </div>
-
-            {/* KPI: Payments awaiting approval */}
-            <div
-              onClick={() => setActiveTab('approvals')}
-              className={`bg-slate-900 border rounded-2xl p-4 shadow-lg cursor-pointer transition-colors ${
-                pendingPayments > 0
-                  ? 'border-amber-500/40 hover:border-amber-500/70'
-                  : 'border-slate-800 hover:border-slate-700'
-              }`}
-            >
-              <div className="flex items-center justify-between text-slate-400 mb-1">
-                <span className="text-[11px] font-medium">Payments to Approve</span>
-                <CreditCard className="w-4 h-4 text-amber-400" />
-              </div>
-              <p className="text-xl font-extrabold text-white">{pendingPayments} Pending</p>
-              <p className="text-[10px] text-amber-400 font-medium mt-1">
-                {pendingPayments > 0 ? 'Awaiting your review' : 'All caught up'}
-              </p>
             </div>
           </div>
 
@@ -678,7 +623,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             {isAddingMember && (
               <form onSubmit={handleAddMemberSubmit} className="bg-slate-950 p-4 rounded-2xl border border-emerald-500/20 space-y-3">
                 <div className="flex items-center gap-2 mb-2">
-                  <Mail className="w-4 h-4 text-emerald-400" />
+                  <MailIcon className="w-4 h-4 text-emerald-400" />
                   <p className="text-xs font-bold text-emerald-400">Register New Member (Auto-emails credentials)</p>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -735,10 +680,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   )}
                   <button 
                     type="submit"
-                    disabled={isAddingMember}
-                    className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs transition-all flex-1"
+                    disabled={isSubmitting}
+                    className={`bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs transition-all flex-1 ${isSubmitting ? 'opacity-70 cursor-not-allowed' : ''}`}
                   >
-                    {isAddingMember ? 'Creating...' : 'Send Credentials'}
+                    {isSubmitting ? 'Creating...' : 'Send Credentials'}
                   </button>
                 </div>
               </form>
@@ -869,25 +814,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               })}
             </div>
           </div>
-        </div>
-      )}
-
-      {/* TAB 3: PAYMENT APPROVALS */}
-      {activeTab === 'approvals' && (
-        <div className="space-y-4 animate-in fade-in">
-          <div>
-            <h2 className="text-lg font-extrabold text-white">Payment Approvals</h2>
-            <p className="text-xs text-slate-400 mt-0.5">
-              Members request a renewal after paying at the desk. Approving here
-              is what extends their membership.
-            </p>
-          </div>
-          <PaymentApprovalsPanel
-            payments={payments}
-            onApprove={onApprovePayment}
-            onReject={onRejectPayment}
-            isLive={isLive}
-          />
         </div>
       )}
 

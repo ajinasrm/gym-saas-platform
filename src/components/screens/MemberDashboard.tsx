@@ -44,7 +44,7 @@ interface MemberDashboardProps {
   workoutPlan: WorkoutPlan;
   bodyMetrics: BodyProgressMetric[];
   onOpenQRPass: () => void;
-  onOpenPaymentModal: (planName: string, amount: number, months: number) => void;
+  onOpenPaymentModal: (planName: string, amount: number) => void;
   onOpenAIWorkoutModal: () => void;
 }
 
@@ -691,19 +691,11 @@ export const MemberDashboard: React.FC<MemberDashboardProps> = ({
               </select>
               
               <button
-                onClick={() => onOpenPaymentModal(
-                  `Pro Pass (${selectedRenewalPlan})`,
-                  RENEWAL_PLANS[selectedRenewalPlan].price,
-                  RENEWAL_PLANS[selectedRenewalPlan].duration,
-                )}
+                onClick={() => onOpenPaymentModal(`Pro Pass (${selectedRenewalPlan})`, RENEWAL_PLANS[selectedRenewalPlan].price)}
                 className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg"
               >
-                <CreditCard className="w-4 h-4" /> Request Renewal
+                <CreditCard className="w-4 h-4" /> Pay & Renew Membership
               </button>
-              <p className="text-[10px] text-slate-500 text-center leading-relaxed">
-                Pay at the front desk, then send the request. A gym admin
-                confirms it and your membership dates update automatically.
-              </p>
             </div>
           </div>
         </div>

@@ -1,24 +1,13 @@
 import React, { useState } from 'react';
-import { X, QrCode, Camera, Lock, Unlock } from 'lucide-react';
+import { X, QrCode, ShieldCheck, CheckCircle2, AlertCircle, Camera, Sparkles, Lock, Unlock } from 'lucide-react';
 import { User, Tenant } from '../lib/types';
-import { findUserByPassCode, fetchActiveMembership, describeDbError } from '../lib/db';
-
-const GATE = 'Turnstile Gate 1 - Main Entry';
 
 interface QRScannerModalProps {
   user: User;
   tenant: Tenant;
   isOpen: boolean;
   onClose: () => void;
-  onCheckInRecorded: (member: User, isGranted: boolean, gate: string) => void;
-  isLive: boolean;
-}
-
-interface ScanResult {
-  success: boolean;
-  message: string;
-  detail?: string;
-  memberName?: string;
+  onCheckInRecorded: (userName: string, isGranted: boolean) => void;
 }
 
 export const QRScannerModal: React.FC<QRScannerModalProps> = ({
@@ -26,87 +15,49 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
   tenant,
   isOpen,
   onClose,
-  onCheckInRecorded,
-  isLive,
+  onCheckInRecorded
 }) => {
   const [activeTab, setActiveTab] = useState<'MY_PASS' | 'SCANNER'>('MY_PASS');
-  const [scannedCodeInput, setScannedCodeInput] = useState(user.qr_pass_code ?? '');
+  const [scannedCodeInput, setScannedCodeInput] = useState(user.qr_pass_code);
   const [isVerifying, setIsVerifying] = useState(false);
-  const [scanResult, setScanResult] = useState<ScanResult | null>(null);
+  const [scanResult, setScanResult] = useState<any>(null);
 
   if (!isOpen) return null;
 
-  /**
-   * Verifies a pass against the database: the code must belong to a member of
-   * this gym, and that member must hold a membership that has not expired.
-   *
-   * v1 posted to /api/attendance/checkin, which granted access to any string
-   * that did not contain the literal word "EXPIRED" and never consulted the
-   * database or wrote a check-in record.
-   */
   const handleVerifyScan = async (codeToTest: string) => {
-    const code = (codeToTest || '').trim();
     setIsVerifying(true);
     setScanResult(null);
 
     try {
-      if (!code) {
-        setScanResult({ success: false, message: 'ACCESS DENIED', detail: 'No pass code supplied.' });
-        return;
-      }
-
-      if (!isLive) {
-        const granted = code === user.qr_pass_code;
-        setScanResult({
-          success: granted,
-          message: granted ? 'ACCESS GRANTED (DEMO)' : 'ACCESS DENIED (DEMO)',
-          detail: granted ? GATE : 'Pass code not recognised in demo data.',
-          memberName: granted ? user.full_name : undefined,
-        });
-        onCheckInRecorded(user, granted, GATE);
-        return;
-      }
-
-      const member = await findUserByPassCode(tenant.gym_id, code);
-      if (!member) {
-        setScanResult({
-          success: false,
-          message: 'ACCESS DENIED',
-          detail: 'Pass code not registered at this gym.',
-        });
-        return;
-      }
-
-      const membership = await fetchActiveMembership(member.user_id);
-      const expired =
-        !membership ||
-        membership.status !== 'Active' ||
-        new Date(membership.end_date) < new Date(new Date().toDateString());
-
-      if (expired) {
-        setScanResult({
-          success: false,
-          message: 'ACCESS DENIED',
-          detail: membership
-            ? `Membership ended ${membership.end_date}. Please renew at the front desk.`
-            : 'No membership on file for this member.',
-          memberName: member.full_name,
-        });
-        onCheckInRecorded(member, false, GATE);
-        return;
-      }
-
-      setScanResult({
-        success: true,
-        message: 'ACCESS GRANTED - TURNSTILE UNLOCKED',
-        detail: `${GATE} • valid until ${membership.end_date}`,
-        memberName: member.full_name,
+      const res = await fetch('/api/attendance/checkin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          qrPassToken: codeToTest,
+          gymId: tenant.gym_id
+        })
       });
-      onCheckInRecorded(member, true, GATE);
+
+      const data = await res.json();
+      setIsVerifying(false);
+
+      if (res.ok && data.success) {
+        setScanResult({
+          success: true,
+          message: 'ACCESS GRANTED - TURNSTILE GATE UNLOCKED',
+          gate: data.gateAccess,
+          streak: data.streakCount
+        });
+        onCheckInRecorded(user.full_name, true);
+      } else {
+        setScanResult({
+          success: false,
+          message: data.error || 'ACCESS DENIED - EXPIRED OR INVALID PASS'
+        });
+        onCheckInRecorded(user.full_name, false);
+      }
     } catch (e) {
       console.error(e);
-      setScanResult({ success: false, message: 'SCAN FAILED', detail: describeDbError(e) });
-    } finally {
       setIsVerifying(false);
     }
   };
@@ -187,7 +138,7 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
 
               <Camera className="w-10 h-10 text-indigo-400 mb-2 opacity-60" />
               <p className="text-xs text-slate-300 font-semibold">Position Member QR Code inside viewfinder</p>
-              <p className="text-[10px] text-slate-500 mt-1">Or paste a member's pass code below</p>
+              <p className="text-[10px] text-slate-500 mt-1">Simulating Turnstile Optical Scanner</p>
             </div>
 
             {/* Test Controls */}
@@ -222,13 +173,13 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
                 <span className="text-slate-600">•</span>
                 <button
                   onClick={() => {
-                    const unknown = 'PASS-UNKNOWN-000';
-                    setScannedCodeInput(unknown);
-                    handleVerifyScan(unknown);
+                    const expiredCode = 'PASS_EXPIRED_TOKEN_99';
+                    setScannedCodeInput(expiredCode);
+                    handleVerifyScan(expiredCode);
                   }}
                   className="text-[10px] text-rose-400 font-semibold hover:underline"
                 >
-                  ❌ Test Unknown Pass
+                  ❌ Test Expired Pass
                 </button>
               </div>
             </div>
@@ -244,10 +195,7 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
                   {scanResult.success ? <Unlock className="w-4 h-4 text-emerald-400" /> : <Lock className="w-4 h-4 text-rose-400" />}
                   <span>{scanResult.message}</span>
                 </div>
-                {scanResult.memberName && (
-                  <p className="text-[11px] font-semibold opacity-90">{scanResult.memberName}</p>
-                )}
-                {scanResult.detail && <p className="text-[10px] opacity-80">{scanResult.detail}</p>}
+                {scanResult.gate && <p className="text-[10px] text-emerald-300">{scanResult.gate}</p>}
               </div>
             )}
           </div>
